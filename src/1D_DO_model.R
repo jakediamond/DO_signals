@@ -23,6 +23,7 @@ parms <- c(
   d = 2, # average depth (m)
   w = 60, # average channel width (m)
   S = 0.001, # average channel slope (m/m)
+  D = 3600, # dispersivity (m/h)
   
   # Reactive parameters
   GPP_max = 2, # maximum GPP rate (g O2/m2/h); multiply by 6 to estimate daily GPP
@@ -30,18 +31,14 @@ parms <- c(
   do_sat = 9, # saturation for DO, should be T dependent (mg/L)
   K = 1.7, # gas exchange coefficient (1/d)
   er_const = -0.5, # constant ER rate (g O2/m2/h)
-  chan_frac = 0.5, # fraction of ER that occurs in channel vs storage (-)
+  ramp_rate = 2/3, # 100%rate GPP ramp; +1 = increase from 0-200%; -1 = decrease from 200-0% (GPP%/box) 
+  f = 1, # frequency of longitudinal GPP sine wave, 1 = 1 wave per reach (1/reach_length)
+  phase = 0, #phase of longitudinal GPP sine wave (-)
   
   # Storage parameters
   A_stor_frac = 0.25, # fraction of channel area that is storage area (-); for Rainbow River (Hensley and Cohen 2012)
   stor_depth = 1, # arbitrary depth of storage to convert from area to volume (m)
-  alpha = 0.252, # exchange coefficient (1/h); 0.252 for Rainbow River (Hensley and Cohen 2012)
-  k_er = 0.4, # storage area respiration coefficient (-)
-  eta_er = 0.2, #storage area respiration efficiency (-)
-  
-  # Random GPP parameters
-  sd = 0.2, # standard deviation of normal distribution to GPP
-  p_bi = 0.5 # probability for binomial distribution of GPP
+  alpha = 0.252 # exchange coefficient (1/h); 0.252 for Rainbow River (Hensley and Cohen 2012)
  )
 
 # Set up model grid -------------------------------------------------------
@@ -49,9 +46,9 @@ parms <- c(
 grid <- with(as.list(parms),
              setup.grid.1D(L = L, N = L / dx)
              )
-# Dispersion grid, all the same longitudinal dispersion based on shear velocity
+# Dispersion grid
 D.grid <- with(as.list(parms),
-                 setup.prop.1D(value = 3600, # (m2/h)
+                 setup.prop.1D(value = D, # (m2/h)
                                grid = grid)
                ) 
 # Velocity grid, all the same based on discharge and area (assumed rectangular)
@@ -61,7 +58,7 @@ v.grid <- with(as.list(parms),
                )
 
 # Overall model function ----------------------------------------------------------
-model <- function(time, state, parms, gpp_choice, er_loc_choice, er_choice){
+model <- function(time, state, parms, gpp_choice){
   with(as.list(parms), {
     # Need to set the seed to avoid crazy computation issues, and to allow rep.
     set.seed(42)
@@ -90,25 +87,11 @@ model <- function(time, state, parms, gpp_choice, er_loc_choice, er_choice){
     gpp = switch(gpp_choice,
                  none = rep(0, N),
                  constant = rep(gpp_base, N),
-                 # sine = sin(2*pi*())
-                 ran_norm = rnorm(N, gpp_base, sd),
-                 ran_uni = runif(N, 
-                                 min = 0.5*gpp_base, 
-                                 max = 1.5*gpp_base),
-                 ran_bin = gpp_base * (rbinom(N, 1, p_bi)),
-                 ramp_up = seq(0, 
-                               gpp_base*2, 
-                               length.out = N),
-                 ramp_down = seq(gpp_base*2,
-                                 0, 
-                                 length.out = N),
-                 ramp_up_down = c(seq(0, 
-                                      gpp_base, 
-                                      length.out = N/2),
-                                  seq(gpp_base,
-                                      0, 
-                                      length.out = N/2))
-                 )
+                 sine = gpp_base*sin((2*pi*f)*(seq(0,1,length.out=N)+phase))+gpp_base,
+                 ramp = seq(gpp_base*(1-ramp_rate),
+                            gpp_base*(1+ramp_rate),
+                            length.out = N))
+                 
     # Reaeration in each box (g O2/m2/h)
     reaeration = k * (do_sat - DO)
 
@@ -121,38 +104,17 @@ model <- function(time, state, parms, gpp_choice, er_loc_choice, er_choice){
                       dx = grid)$dC 
     
     # Ecosystem respiration amount (g O2/m2/h)
-    er = switch(er_choice,
-                constant = rep(er_const, N),
-                efficiency = -k_er * DO_stor ^ eta_er
-                )
+    er = rep(er_const, N)
     
     # Ecosystem respiration location changes where DO is consumed
     # Change in storage concentration due to respiration (g O2/m3/h)
-    storage = switch(er_loc_choice,
-                     storage = alpha * (A / A_s) * (DO - DO_stor) + 
-                       (er / stor_depth),
-                     channel = alpha * (A / A_s) * (DO - DO_stor),
-                     both = alpha * (A / A_s) * (DO - DO_stor) + 
-                       (er / stor_depth)  * (1 - chan_frac)
-                     )
+    storage = alpha * (A / A_s) * (DO - DO_stor)
     
     # Change in stream DO concentration due to transfer to transient storage (g O2/m3/h)
     storage_str = alpha * (DO_stor - DO)
     
-    # Rates of change
-    dDO = switch(er_loc_choice,
-                 storage = (adv_dis + 
-                              storage_str + 
-                              (gpp + reaeration) / d) * del_t,
-                 channel = (adv_dis + 
-                              storage_str + 
-                              (gpp + reaeration + er) / d) * del_t,
-                 both = (adv_dis + storage_str + 
-                           (gpp + reaeration + 
-                              er * chan_frac
-                            ) / d
-                         ) * del_t,
-                 )
+    # Rates of change (g O2/m3)
+    dDO = (adv_dis + storage_str + (gpp + er + reaeration) / d) * del_t
     dDO_stor = storage * del_t
     diffs = c(dDO = dDO, dDO_stor = dDO_stor)
     
@@ -173,20 +135,13 @@ yini <- c(DO = rep(DO_ini, with(as.list(parms), L / dx)),
 
 # Run the model -----------------------------------------------------------
 # Get simulation times
-del_t <- 1 # time step (h)
+del_t <- 0.5 # time step (h)
 days <- 5 # number of days to simulate
 simulation_time <- 24 * days / del_t # simulation time (h)
 times <- seq(0, simulation_time, by = del_t)
 
-# GPP choice (choose between: "none", "constant", "sine,"ran_uni", "ran_norm", "ran_bin", 
-# "ramp_up", "ramp_down", or "ramp_up_down")
-gpp_choice <- "constant"
-
-# ER location choice (choose between: "storage", "channel", or "both")
-er_loc_choice <- "channel"
-
-# ER choice (choose between: "constant", or "efficiency")
-er_choice <- "constant"
+# GPP choice (choose between: "none", "constant", "sine,"ramp")
+gpp_choice <- "ramp"
 
 # uses the R deSolve function (lsoda method)
 out <- ode.1D(y = yini,
@@ -195,9 +150,7 @@ out <- ode.1D(y = yini,
               parms = parms,
               nspec = 2,
               dimens = with(as.list(parms), L / dx),
-              gpp_choice = gpp_choice,
-              er_loc_choice = er_loc_choice,
-              er_choice = er_choice)
+              gpp_choice = gpp_choice)
 
 # Examine the model output ------------------------------------------------
 # Reorganize the data into long-form

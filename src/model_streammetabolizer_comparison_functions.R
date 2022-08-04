@@ -15,18 +15,16 @@ func_mod <- function(...){
   # Get the changes to parameters
   arguments = list(...)
   
-  gpp_use = arguments[["gpp"]]
-  er_use = arguments[["er"]]
+  gpp_use = arguments[["gpp_choice"]]
   D_use = arguments[["D"]]
-  gpp = ifelse(is.character(gpp_use), gpp_use, "constant")
-  er = ifelse(is.character(er_use), er_use, "channel")
+  gpp = ifelse(is.character(gpp_use), gpp_use, "ramp")
   D_mod = ifelse(is.numeric(D_use), D_use, 3600)
   
   # Prescribe dispersion
   # D_use = if(is.numeric(D)){D} else{d * sqrt(9.8 * d * S) * 3600} # (m2/h)
   
   # Dispersion grid (need to make a global variabel with <<-)
-  D.grid <<- with(as.list(parms),
+  D.grid <- with(as.list(parms),
                  setup.prop.1D(value = D_mod,
                                grid = grid)
   )
@@ -39,9 +37,7 @@ func_mod <- function(...){
                          unlist(arguments)),
          nspec = 2,
          dimens = with(as.list(parms), L / dx),
-         gpp_choice = gpp,
-         er_loc_choice = er,
-         er_choice = "constant")
+         gpp_choice = gpp)
 }
 
 # Turn model outputs into dataframes to compare with streammetabolizer

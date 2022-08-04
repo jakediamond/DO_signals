@@ -15,32 +15,29 @@ source(file.path("src", "1D_DO_model.R"))
 # Load the functions
 source(file.path("src", "model_streammetabolizer_comparison_functions.R"))
 
-# Create dataframe of treatments (alpha = 0 means no storage, D = 1 is very low dispersion)
-trts <- expand.grid(A_stor_frac = c(0, 0.01, 0.5, 2)
-                    # a = seq(0, 1, 0.25), #prescribe the exchange with storage (1/h)
-                    # K = c(0, 1, 5, 20) #prescribe the O2 gas exchange constant (1/d)
-                    # gpp_choice = "constant", #prescribe the GPP function 
-                    # er_loc_choice = "channel", #prescribe where ER happens
-                    # D = c(0, 2*3600, 8*3600, 32*3600, 64*3600) #prescribe dispersion (m2/h), delete line if you want it to be calculated internally
-                    )
+
+# Create dataframe of treatments
+trts <- expand.grid(
+                    ramp_rate = c(1, 2/3, 0.5, 0, -0.5, -2/3, -1))
+  # A_stor_frac = c(0, 0.01, 0.5, 2)
+  # a = seq(0, 1, 0.25), #prescribe the exchange with storage (1/h)
+  # K = c(0, 1, 5, 20) #prescribe the O2 gas exchange constant (1/d)
+  # gpp_choice = "constant", #prescribe the GPP function
+  # er_loc_choice = "channel", #prescribe where ER happens
+  # D = c(0, 2*3600, 8*3600, 32*3600, 64*3600) #prescribe dispersion (m2/h), delete line if you want it to be calculated internally
+# )
+
 
 # Apply 1D DO model to the treatments
 mods <- trts %>%
-  mutate(out = pmap(list(A_stor_frac = A_stor_frac
-                         # a, 
-                         # K = K 
-                         # as.character(gpp_choice), 
-                         # as.character(er_loc_choice),
-                         # D = D
-                         ),
-                    func_mod
-                    )
-         )
+  mutate(out = pmap(list(
+                         ramp_rate = ramp_rate),
+                    func_mod))
 
 # Create dataframe for with input data for different reaches
 res <- mods %>%
   mutate(data = map(out, df_fun)) %>%
-  crossing(reach_no = c(80)) # right now, just choose one reach in the middle as representative, but can choose multiple
+  crossing(reach_no = c(98)) # right now, just choose one reach in the middle as representative, but can choose multiple
 
 # Now add a column for the streammetabolizer input data
 res <- res %>%
@@ -54,14 +51,14 @@ x = select(res, -sm_data, -out, -reach_no) %>%
   mutate(data = map(data, ~ .x %>% 
         mutate_all(as.character))) %>% 
   unnest(data) %>%
-  filter(reach == 80) %>%
+  filter(reach == 98) %>%
   type_convert()
 
 y = filter(x, type == "DO")  %>%
   mutate(value = as.numeric(value))
 
 ggplot(data = y,
-       aes(x = time, y = value, color = as.factor(A_stor_frac), group = A_stor_frac)) +
+       aes(x = time, y = value, color = as.factor(ramp_rate), group = ramp_rate)) +
   geom_line(size = 1.5) +
   # facet_wrap(~D) +
   scale_color_viridis_d()
