@@ -90,6 +90,7 @@ model <- function(time, state, parms, gpp_choice, er_loc_choice, er_choice){
     gpp = switch(gpp_choice,
                  none = rep(0, N),
                  constant = rep(gpp_base, N),
+                 # sine = sin(2*pi*())
                  ran_norm = rnorm(N, gpp_base, sd),
                  ran_uni = runif(N, 
                                  min = 0.5*gpp_base, 
@@ -177,7 +178,7 @@ days <- 5 # number of days to simulate
 simulation_time <- 24 * days / del_t # simulation time (h)
 times <- seq(0, simulation_time, by = del_t)
 
-# GPP choice (choose between: "none", "constant", "ran_uni", "ran_norm", "ran_bin", 
+# GPP choice (choose between: "none", "constant", "sine,"ran_uni", "ran_norm", "ran_bin", 
 # "ramp_up", "ramp_down", or "ramp_up_down")
 gpp_choice <- "constant"
 
