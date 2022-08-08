@@ -15,27 +15,36 @@ source(file.path("src", "1D_DO_model.R"))
 # Load the functions
 source(file.path("src", "model_streammetabolizer_comparison_functions.R"))
 
-
 # Create dataframe of treatments
-trts <- expand.grid(
-                    ramp_rate = c(1, 2/3, 0.5, 0, -0.5, -2/3, -1))
-  # A_stor_frac = c(0, 0.01, 0.5, 2)
-  # a = seq(0, 1, 0.25), #prescribe the exchange with storage (1/h)
-  # K = c(0, 1, 5, 20) #prescribe the O2 gas exchange constant (1/d)
-  # gpp_choice = "constant", #prescribe the GPP function
-  # er_loc_choice = "channel", #prescribe where ER happens
-  # D = c(0, 2*3600, 8*3600, 32*3600, 64*3600) #prescribe dispersion (m2/h), delete line if you want it to be calculated internally
-# )
+trts <- tibble(#A_stor_frac = c(0, 0.01, 0.5, 2),
+               #K = c(0, 1, 5, 20), #prescribe the O2 gas exchange constant (1/d)
+               #D = c(0, 8*3600, 32*3600, 64*3600) #prescribe dispersion (m2/h), delete line if you want it to be calculated internally
+               # gpp_choice = "ramp",
+               # GPP_max = runif(20, min = 0, max = 2),
+               # f = runif(20, min = 1, max = 10),
+               # phase = ,
+               ramp_rate = c(-1, -2/3, -1/3, 0, 1/3, 2/3, 1)
+               ) %>%
+  pivot_longer(cols = everything(), names_to = "parameter", values_to = "treatment")
 
+# For the 10000 iterations version
+trts2 <- expand_grid(GPP_max = runif(20, min = 0, max = 2),
+                     f = runif(20, min = 1, max = 10))
 
 # Apply 1D DO model to the treatments
 mods <- trts %>%
-  mutate(out = pmap(list(
-                         ramp_rate = ramp_rate),
-                    func_mod))
+  mutate(out = map2(parameter, treatment, func_mod, gpp_choice = "ramp"))
+
+# For the iterations
+mods2 <- trts2 %>%
+  mutate(out = pmap(list(f = f, GPP_max = GPP_max), func_mod2))
 
 # Create dataframe for with input data for different reaches
 res <- mods %>%
+  mutate(data = map(out, df_fun)) %>%
+  crossing(reach_no = c(98)) # right now, just choose one reach in the middle as representative, but can choose multiple
+
+res2 <- mods2 %>%
   mutate(data = map(out, df_fun)) %>%
   crossing(reach_no = c(98)) # right now, just choose one reach in the middle as representative, but can choose multiple
 
@@ -43,31 +52,100 @@ res <- mods %>%
 res <- res %>%
   mutate(sm_data = map2(data, reach_no, sm_fun))
 
+res2 <- res2 %>%
+  mutate(sm_data = map2(data, reach_no, sm_fun))
+
 # Save this data so can skip these steps in the future
-# saveRDS(res, file.path("data", "data_prep_disp_alpha.RDS"))
+# saveRDS(res2, file.path("data", "data_sine_freq_mag_test.RDS"))
 # res <- readRDS(file.path("data", "data_prep_disp_alpha.RDS"))
 
-x = select(res, -sm_data, -out, -reach_no) %>%
+# Get data in nice format for easy plotting
+res_p <- select(res2, -sm_data, -out, -reach_no) %>%
   mutate(data = map(data, ~ .x %>% 
-        mutate_all(as.character))) %>% 
+                      mutate_all(as.character))) %>% 
   unnest(data) %>%
   filter(reach == 98) %>%
   type_convert()
 
-y = filter(x, type == "DO")  %>%
+# get the amplitude and timing of peak DO
+res_sine <- res_p %>%
+  ungroup() %>%
+  filter(type == "DO",
+         between(time_hr, 24, 72))  %>%
+  mutate(value = as.numeric(value),
+         day = ifelse(time_hr < 48, 1, 2),
+         hr_day = time_hr %% 24) %>%
+  group_by(GPP_max, f, day) %>%
+  summarize(amp = max(value) - min(value),
+            max_time = hr_day[which(value == max(value))]) %>%
+  ungroup() %>%
+  group_by(GPP_max, f) %>%
+  summarize(amp = mean(amp),
+            max_time = mean(max_time))
+  
+ggplot(data = res_sine,
+       aes(x = 1/f,
+           y = GPP_max,
+           color = max_time)) +
+  geom_point()+
+  scale_color_viridis_c() +
+  theme_bw()
+
+
+
+df_fig2 <- filter(res_p, type == "DO")  %>%
+  mutate(value = as.numeric(value)) %>%
+  filter(between(time_hr, 24, 72))
+
+p_fig2 <- ggplot(data = df_fig2,
+                 aes(x = time_hr - 24, y = value, 
+                     # color = (time_hr - 7)%%24,
+                     linetype = as.factor(treatment),
+                     group = treatment)) +
+  geom_line(size = 1.5) +
+  theme_bw(base_size = 10) +
+  scale_x_continuous(breaks = seq(0,71,24), expand = c(0, 0)) +
+  facet_wrap(~parameter) +
+  # scale_color_viridis_c(guide = "none") +
+  labs(x = "time (hour)", y = expression("dissolved oxygen (mg "*L^{-1}*")")) + 
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank())
+p_fig2
+
+# Plot the data
+res_p_d <- select(res, -sm_data, -out, -reach_no) %>%
+  mutate(data = map(data, ~ .x %>% 
+                      mutate_all(as.character))) %>% 
+  unnest(data) %>%
+  filter(type == "DO",
+         time_hr %in% c(48, 52, 56, 60, 64, 68),
+         treatment %in% c(-1, 0, 1)) %>%
+  type_convert() %>%
   mutate(value = as.numeric(value))
 
-ggplot(data = y,
-       aes(x = time, y = value, color = as.factor(ramp_rate), group = ramp_rate)) +
-  geom_line(size = 1.5) +
-  # facet_wrap(~D) +
-  scale_color_viridis_d()
+p_fig3_dist <- ggplot(data = res_p_d,
+       aes(x = dist,
+           y = as.numeric(value),
+           color = as.factor(as.numeric(time_hr %% 24)))) +
+  geom_line(size = 1.2) +
+  facet_grid(rows = vars(treatment)) +
+  scale_color_viridis_d(name = "time") +
+  scale_y_continuous(limits = c(7, 14)) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  labs(x = "distance (m)", 
+       y = expression("dissolved oxygen (mg "*L^{-1}*")"))
+p_fig3_dist
 
-ggplot(data = y,
-       aes(x = time, y = value, color = log(D), group = D)) +
-  geom_line(size = 1.5, alpha = 0.3) +
-  facet_wrap(~alpha) +
-  scale_color_viridis_c()
+
+
+
+
+
+
+
+
+
 
 # Get streammetabolizer estimates based on 1D DO model inputs
 results_sm <- res %>%

@@ -11,23 +11,39 @@ library(ReacTran)
 library(lubridate)
 
 # Function to run the 1D model with choices of treatments
-func_mod <- function(...){
+func_mod <- function(parameter, treatment, gpp_choice = "constant", ...){
+  
+  # Account for gpp in particular because it's not part of parms
+  gpp = gpp_choice
+  
+  # Account for dispersion in particular because it's not part of parms
+  D_mod = ifelse(parameter == "D", treatment, 3600)
+  
+  # Dispersion grid (need to make a global variabel with <<-)
+  D.grid <<- with(as.list(parms),
+                 setup.prop.1D(value = D_mod,
+                               grid = grid))
+  # Model with user specifications
+  ode.1D(y = yini,
+         times = times,
+         func = model,
+         parms = replace(parms,
+                         parameter,
+                         treatment),
+         nspec = 2,
+         dimens = with(as.list(parms), L / dx),
+         gpp_choice = gpp)
+}
+
+
+# Second Function to run the 1D model with interacting choices of treatments
+func_mod2 <- function(..., gpp_choice = "sine"){
   # Get the changes to parameters
   arguments = list(...)
   
-  gpp_use = arguments[["gpp_choice"]]
-  D_use = arguments[["D"]]
-  gpp = ifelse(is.character(gpp_use), gpp_use, "ramp")
-  D_mod = ifelse(is.numeric(D_use), D_use, 3600)
+  # Account for gpp in particular because it's not part of parms
+  gpp = gpp_choice
   
-  # Prescribe dispersion
-  # D_use = if(is.numeric(D)){D} else{d * sqrt(9.8 * d * S) * 3600} # (m2/h)
-  
-  # Dispersion grid (need to make a global variabel with <<-)
-  D.grid <- with(as.list(parms),
-                 setup.prop.1D(value = D_mod,
-                               grid = grid)
-  )
   # Model with user specifications
   ode.1D(y = yini,
          times = times,
@@ -39,6 +55,7 @@ func_mod <- function(...){
          dimens = with(as.list(parms), L / dx),
          gpp_choice = gpp)
 }
+
 
 # Turn model outputs into dataframes to compare with streammetabolizer
 # function to do so
