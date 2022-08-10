@@ -6,9 +6,11 @@
 
 # Load libraries
 library(deSolve)
+library(lubridate)
+library(tidytable)
 library(tidyverse)
 library(ReacTran)
-library(lubridate)
+
 
 # Function to run the 1D model with choices of treatments
 func_mod <- function(parameter, treatment, gpp_choice = "constant", ...){
@@ -61,8 +63,8 @@ func_mod2 <- function(..., gpp_choice = "sine"){
 # function to do so
 df_fun <- function(mod, reach_choice){
   as_tibble(mod) %>%
-    pivot_longer(cols = -time, names_to = "key", values_to = "value") %>%
-    separate(key, c("type", "reach"), "(?<=[A-Za-z])(?=[0-9])") %>%
+    tidyfast::dt_pivot_longer(cols = -time, names_to = "key", values_to = "value") %>%
+    tidyfast::dt_separate(key, c("type", "reach"),"(?<=[A-Za-z])(?=[0-9])", fixed = FALSE, perl = T) %>%
     mutate(time_hr = as.numeric(time * del_t),
            reach = as.numeric(reach),
            dist = as.numeric(reach) * with(as.list(parms), dx)) %>%
@@ -81,7 +83,7 @@ sm_fun <- function(data, reach_no){
     filter(type %in% c("PAR", "DO"),
            reach == reach_no) %>%
     select(time_hr, type, value) %>%
-    pivot_wider(names_from = type, values_from = value) %>%
+    tidyfast::dt_pivot_wider(names_from = type, values_from = value) %>%
     rename(light = PAR,
            DO.obs = DO) %>%
     mutate(temp.water = 20,

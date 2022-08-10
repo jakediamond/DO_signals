@@ -32,8 +32,9 @@ parms <- c(
   K = 1.7, # gas exchange coefficient (1/d)
   er_const = -0.5, # constant ER rate (g O2/m2/h)
   ramp_rate = 2/3, # 100%rate GPP ramp; +1 = increase from 0-200%; -1 = decrease from 200-0% (GPP%/box) 
-  f = 1, # frequency of longitudinal GPP sine wave, 1 = 1 wave per reach (1/reach_length)
-  phase = 0, #phase of longitudinal GPP sine wave (-)
+  f = 2, # frequency of longitudinal GPP sine wave, 1 = 1 wave per reach (1/reach_length)
+  phase = 0, #phase of longitudinal GPP sine wave, fractions of pi (-)
+  amp = 1, # amplitude of GPP sine wave, needs to be less than GPP_max to avoid negative GPP
   
   # Storage parameters
   A_stor_frac = 0.25, # fraction of channel area that is storage area (-); for Rainbow River (Hensley and Cohen 2012)
@@ -83,11 +84,12 @@ model <- function(time, state, parms, gpp_choice){
     # GPP is switching function depending on user choice (g O2/m2/h)
     # First calculate base rate of GPP as Michaelis-Menten
     gpp_base = GPP_max * par / (k_gpp + par)
+
     # Then modulate this based on user choice
     gpp = switch(gpp_choice,
                  none = rep(0, N),
                  constant = rep(gpp_base, N),
-                 sine = gpp_base*sin((2*pi*f)*(seq(0,1,length.out=N)+phase))+gpp_base,
+                 sine = amp*gpp_base*sin(2*pi*f*seq(0,1,length.out=N)+phase*pi)+gpp_base,
                  ramp = seq(gpp_base*(1-ramp_rate),
                             gpp_base*(1+ramp_rate),
                             length.out = N))
@@ -141,7 +143,7 @@ simulation_time <- 24 * days / del_t # simulation time (h)
 times <- seq(0, simulation_time, by = del_t)
 
 # GPP choice (choose between: "none", "constant", "sine,"ramp")
-gpp_choice <- "ramp"
+gpp_choice <- "sine"
 
 # uses the R deSolve function (lsoda method)
 out <- ode.1D(y = yini,
@@ -155,8 +157,8 @@ out <- ode.1D(y = yini,
 # Examine the model output ------------------------------------------------
 # Reorganize the data into long-form
 df <- as_tibble(out) %>%
-  gather(key, value, -time) %>%
-  separate(key, c("type", "reach"), "(?<=[A-Za-z])(?=[0-9])") %>%
+  tidyfast::dt_pivot_longer(cols = -time, names_to = "key") %>%
+  tidyfast::dt_separate(key, c("type", "reach"), "(?<=[A-Za-z])(?=[0-9])", fixed = FALSE, perl = T) %>%
   mutate(time_hr = time * del_t,
          dist = as.numeric(reach) * with(as.list(parms), dx)) %>%
   mutate(type_plot = recode(type,
@@ -166,6 +168,9 @@ df <- as_tibble(out) %>%
          `ER` = "ER~(g~O^2~m^{-2}~h^{-1})",
          `GPP` = "GPP~(g~O^2~m^{-2}~h^{-1})",
          `PAR` = "PAR~({`mu`}*mol~m^{-2}~s^{-1})"))
+
+# save base case data to compare later
+# saveRDS(df, file.path("data", "DO_model_base_case.RDS"))
 
 # Plot the data
 ggplot(data = filter(df, reach %in% c(98)),
@@ -180,7 +185,6 @@ ggplot(data = filter(df, reach %in% c(98)),
   theme_bw() +
   xlab("Time (h)") +
   ylab("")
-
 
 # Plot the data
 ggplot(data = filter(df, time_hr %in% c(48, 52, 56, 60, 64, 68),
@@ -199,3 +203,20 @@ ggplot(data = filter(df, time_hr %in% c(48, 52, 56, 60, 64, 68),
   xlab("distance (m)") +
   ylab("")
 
+
+
+ggplot(data = filter(df,
+                     type == "GPP",
+                     time_hr ==12),
+       aes(x = dist,
+           y = as.numeric(value))) +
+  geom_line() +
+  # geom_point(alpha = 0.4) +
+  # facet_grid(rows = vars(type_plot), scales = "free_y",
+  #            labeller = label_parsed) +
+  # scale_color_viridis_d(name = "time") +
+  # scale_y_continuous(limits = c(7, 13)) +
+  # scale_x_continuous(breaks = seq(0, simulation_time * del_t, 24)) +
+  theme_bw() +
+  xlab("distance (m)") +
+  ylab("")

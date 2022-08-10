@@ -21,30 +21,18 @@ trts <- tibble(#A_stor_frac = c(0, 0.01, 0.5, 2),
                #D = c(0, 8*3600, 32*3600, 64*3600) #prescribe dispersion (m2/h), delete line if you want it to be calculated internally
                # gpp_choice = "ramp",
                # GPP_max = runif(20, min = 0, max = 2),
-               # f = runif(20, min = 1, max = 10),
+               f = c(1, 2 ,4, 8)
                # phase = ,
-               ramp_rate = c(-1, -2/3, -1/3, 0, 1/3, 2/3, 1)
+               # ramp_rate = c(-1, -2/3, -1/3, 0, 1/3, 2/3, 1)
                ) %>%
   pivot_longer(cols = everything(), names_to = "parameter", values_to = "treatment")
 
-# For the 10000 iterations version
-trts2 <- expand_grid(GPP_max = runif(20, min = 0, max = 2),
-                     f = runif(20, min = 1, max = 10))
-
 # Apply 1D DO model to the treatments
 mods <- trts %>%
-  mutate(out = map2(parameter, treatment, func_mod, gpp_choice = "ramp"))
-
-# For the iterations
-mods2 <- trts2 %>%
-  mutate(out = pmap(list(f = f, GPP_max = GPP_max), func_mod2))
+  mutate(out = map2(parameter, treatment, func_mod, gpp_choice = "sine"))
 
 # Create dataframe for with input data for different reaches
 res <- mods %>%
-  mutate(data = map(out, df_fun)) %>%
-  crossing(reach_no = c(98)) # right now, just choose one reach in the middle as representative, but can choose multiple
-
-res2 <- mods2 %>%
   mutate(data = map(out, df_fun)) %>%
   crossing(reach_no = c(98)) # right now, just choose one reach in the middle as representative, but can choose multiple
 
@@ -52,45 +40,13 @@ res2 <- mods2 %>%
 res <- res %>%
   mutate(sm_data = map2(data, reach_no, sm_fun))
 
-res2 <- res2 %>%
-  mutate(sm_data = map2(data, reach_no, sm_fun))
-
-# Save this data so can skip these steps in the future
-# saveRDS(res2, file.path("data", "data_sine_freq_mag_test.RDS"))
-# res <- readRDS(file.path("data", "data_prep_disp_alpha.RDS"))
-
 # Get data in nice format for easy plotting
-res_p <- select(res2, -sm_data, -out, -reach_no) %>%
+res_p <- select(res, -sm_data, -out, -reach_no) %>%
   mutate(data = map(data, ~ .x %>% 
                       mutate_all(as.character))) %>% 
   unnest(data) %>%
   filter(reach == 98) %>%
   type_convert()
-
-# get the amplitude and timing of peak DO
-res_sine <- res_p %>%
-  ungroup() %>%
-  filter(type == "DO",
-         between(time_hr, 24, 72))  %>%
-  mutate(value = as.numeric(value),
-         day = ifelse(time_hr < 48, 1, 2),
-         hr_day = time_hr %% 24) %>%
-  group_by(GPP_max, f, day) %>%
-  summarize(amp = max(value) - min(value),
-            max_time = hr_day[which(value == max(value))]) %>%
-  ungroup() %>%
-  group_by(GPP_max, f) %>%
-  summarize(amp = mean(amp),
-            max_time = mean(max_time))
-  
-ggplot(data = res_sine,
-       aes(x = 1/f,
-           y = GPP_max,
-           color = max_time)) +
-  geom_point()+
-  scale_color_viridis_c() +
-  theme_bw()
-
 
 
 df_fig2 <- filter(res_p, type == "DO")  %>%
