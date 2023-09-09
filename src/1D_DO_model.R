@@ -12,7 +12,6 @@ model <- function(time, state, parms){
   with(as.list(parms), {
     
     ############################ Set up 1D grid and states ####################
-    v <- Q * 3600 / (w * d) #m/h
     grid <- grid_fun(L, dx) # framework
     D.grid <- dgrid_fun(D, grid) # dispersion
     v.grid <- vgrid_fun(Q, w, d, grid) # velocity
@@ -22,19 +21,13 @@ model <- function(time, state, parms){
     
     # Unpack states
     O2 <- state[1:N]
-    O2_stor <- state[(N+1):(2*N)]
+    O2stor <- state[(N+1):(2*N)]
 
     ############################ Internal parameters ###########################
     # Calculate parameters in correct units (time unit is hour)
     k <- K * d / 24 # gas exchange velocity (m/h)
     A <- w * d # rectangular river cross-sectional area (m2)
     A_s <- A * A_stor_frac # transient storage area (m2)
-    
-    # Calculate in-stream reaction in each box (gpp and gas exchange)
-    # Photosynthetically reactive radiation (umol/m2/s)
-    # par = ifelse(-500+2000*sin((2*pi*(time-(6/del_t)) / (24/del_t))) < 0,
-    #              0,
-    #              -500+2000*sin((2*pi*(time-(6/del_t)) / (24/del_t))))
     
     # mean PAR at the time step (umol/m2/s)
     par <- par_fun(time, day = doy, latitude = latitude)
@@ -83,26 +76,26 @@ model <- function(time, state, parms){
     adv_dis <- tran.1D(C = O2,
                        C.up = Cup, # upstream boundary concentration
                        C.down = Cdown, # downstream boundary concentration
-                       D = D, 
-                       v = v, 
+                       D = D.grid, 
+                       v = v.grid, 
                        dx = grid)$dC 
     
     # Ecosystem respiration in the grid array (g O2/m2/h)
     er <- rep(er_const, N)
     
     # Change in storage concentration exchange with river (g O2/m3/h)
-    storage <- alpha * (A / A_s) * (O2 - O2_stor)
+    storage <- alpha * (A / A_s) * (O2 - O2stor)
     
     # Change in stream O2 concentration due to transfer to transient storage (g O2/m3/h)
-    storage_str <- alpha * (O2_stor - O2)
+    storage_str <- alpha * (O2stor - O2)
     
     ################### Difference equations ################################
     # Rates of change (g/m3/hr)
     dO2 <- (adv_dis + storage_str + (gpp - er + reaeration) / d)
-    dO2_stor <- storage
+    dO2stor <- storage
     
     ################### Model output ################################
-    diffs <- c(dO2 = dO2, dO2_stor = dO2_stor)
+    diffs <- c(dO2 = dO2, dO2stor = dO2stor)
     
     # Fluxes
     fluxes <- c(GPP = gpp, ER = er)

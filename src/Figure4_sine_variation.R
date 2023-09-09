@@ -8,63 +8,22 @@
 library(furrr) # for running in parallel
 library(tidyverse)
 library(patchwork)
+
 # Set up parallelization
 plan(multisession, workers = 4)
 
 # Load the model and necessary functions
+# The model code
 source(file.path("src", "1D_DO_model.R"))
+
+# Internal functions for the model
 source(file.path("src", "functions_for_model.R"))
-source(file.path("src", "model_comparison_functions.R"))
 
-# Get simulation times ----------------------------------------------------
-del_t    <- 0.1             # time step (h)
-days     <- 2               # number of days to simulate
-sim_time <- (24 * days ) - 1 # simulation time (h)
-times    <- seq(0, sim_time, # sequence of in-model times to simulate
-                by = del_t)  
+# model time step, parameters, and initial conditions
+source(file.path("src", "model_initialization.R"))
 
-# Default model parameters --------------------------------------------------------
-parms <- c(
-  # Site info
-  doy = 180, # day of year, used for modeling light
-  latitude = 29, # latitude, used for modeling light
-  temp = 20, # temperature of water, degrees C
-  p_atm = 1, # atmospheric pressure (atm)
-  
-  # Grid parameters and boundary conditions
-  dx = 200, # segment length (m)
-  L = 20000, # reach length (m)
-  C_up = NA_real_, # upstream concentration (mg/L); for Rainbow river = 5.5
-  C_down = NA_real_, # downstream concentration (mg/L), if NA_real_, then set to saturation
-  
-  # Hydraulic parameters
-  Q = 21.6, # discharge (m3/s); for Rainbow river choose 20.4 for mean u=0.18 m/s
-  d = 2, # average depth (m)
-  w = 60, # average channel width (m)
-  D = 4 * 3600, # dispersivity (m2/h); 12240 for Rainbow River (Hensley and Cohen 2012)
-  
-  # Reactive parameters
-  gpp_mean = 12, # mean daily GPP rate (g O2/m2/d)
-  er_mean = 12, # mean daily ER rate (g O2/m2/d)
-  K = 2, # gas exchange coefficient (1/d)
-  
-  # Spatial variability parameters
-  gpp_choice = 3, # none, constant, ramp, or sine
-  ramp_rate = 1, # 100%rate GPP ramp; +1 = increase from 0-200%; -1 = decrease from 200-0% (GPP%/box) 
-  f = 1, # frequency of longitudinal GPP sine wave, 1 = 1 wave per reach (1/reach_length)
-  phase = 0, #phase of longitudinal GPP sine wave (-)
-  
-  # Storage parameters
-  A_stor_frac = 0.2, # fraction of channel area that is storage area (-); for Rainbow River (Hensley and Cohen 2012)
-  alpha = 0.252 # exchange coefficient (1/h); 0.252 for Rainbow River (Hensley and Cohen 2012)
-)
-
-# Initial conditions ------------------------------------------------------
-# Two vectors of stream and transient storage DO concentrations, start at sat.
-DO_ini <- O2_sat(with(as.list(parms), temp)) # mg/L
-DO_stor_ini <- DO_ini # mg/L
-yini <- c(DO = rep(DO_ini, with(as.list(parms), L / dx)),
-          DO_stor = rep(DO_stor_ini, with(as.list(parms), L / dx)))
+# Functions that extract change model parameters format results
+source(file.path("src", "model_treatment_functions.R"))
 
 # Now get the different treatments ----------------------------------------
 # Create dataframe of treatments
@@ -77,26 +36,32 @@ trts <- tibble(
 
 # Apply 1D DO model to the treatments
 mods <- trts |>
-  mutate(out = future_pmap(list(
-    f = f,
-    phase = phase),
-    func_mod))
+  mutate(
+    # "future" runs these in parallel to improve speed
+    out = future_pmap(
+      list(
+        # This is the list of parameters to adjust from the "trts" dataframe
+        gpp_choice = gpp_choice,
+        f = f,
+        phase = phase),
+      # This is a function that changes the parameters and runs the model
+      func_mod))
 
 # Create dataframe for with input data for different reaches
+# "mod_df" is the nicely formatted dataframe results of the model
 res <- mods |>
-  mutate(data = future_map(out, df_fun))
+  mutate(mod_df = future_map(out, df_fun))
+
+# Save these data
+saveRDS(res, file.path("results", "sine.RDS"))
 
 # Clean the results up for plotting
 df_res <- select(res, -out) |>
-  tidytable::mutate(data = tidytable::map(data, ~ .x |> 
-                                            mutate_all(as.character))) |> 
-  tidytable::unnest(data) |>
-  type_convert() |>
+  tidytable::unnest(mod_df) |>
   mutate(line = if_else(phase != 0,
                         paste0("freq ", f, ", ", "phase ", phase),
                         paste("freq", f)),
          line = if_else(f == 0, "uniform", line))
-
 
 # Plot over time
 # Get legend info for plotting lines
@@ -106,7 +71,7 @@ line_info <- tibble(line = unique(df_res$line),
 
 # Look at variation in GPP at noon
 p_gpp <- ggplot(data = filter(df_res, type == "GPP", time == 36,
-                     line != "uniform")|>
+                     line != "uniform") |>
          mutate(fac = if_else(f == 1, "b", "a")),
        aes(x = dist,
            y = value,
@@ -125,6 +90,7 @@ p_gpp <- ggplot(data = filter(df_res, type == "GPP", time == 36,
        y = expression(GPP~"("*g~O[2]~m^{-2}~d^{-1}*")")) +
   theme(legend.position = "none",
         strip.text = element_blank())
+p_gpp
 
 # Plot over time
 p_t <- ggplot() +
@@ -148,6 +114,8 @@ p_t <- ggplot() +
         legend.background = element_rect(color = "transparent",
                                          fill = "transparent"))
 
+p_t
+
 # Plot the data over space, can pick multiple times
 p_d <- ggplot(data = filter(df_res, time %in% c(24, 28, 32, 36, 40, 44),
                      type == "DO", line != "uniform"),
@@ -169,6 +137,7 @@ p_d <- ggplot(data = filter(df_res, time %in% c(24, 28, 32, 36, 40, 44),
         strip.text = element_blank(),
         legend.key.size = unit(0.2, "cm"))
   # guides(colour = guide_legend(nrow = 1))
+p_d
 
 layout <- c(
   area(t = 1, l = 1, b = 2, r = 4),

@@ -11,10 +11,10 @@ library(deSolve)
 # Get model functions -----------------------------------------------------
 source(file.path("src", "functions_for_model.R"))
 source(file.path("src", "1D_DO_model.R"))
-source(file.path("src", "model_comparison_functions.R"))
+source(file.path("src", "model_treatment_functions.R"))
 
 # Get simulation times ----------------------------------------------------
-del_t    <- 1/60                # time step (h)
+del_t    <- 0.1             # time step (h)
 days     <- 2               # number of days to simulate
 sim_time <- (24 * days ) - 1 # simulation time (h)
 times    <- seq(0, sim_time, # sequence of in-model times to simulate
@@ -59,14 +59,11 @@ parms <- c(
 # Initial conditions ------------------------------------------------------
 # Two vectors of stream and transient storage DO concentrations, start at sat.
 DO_ini <- O2_sat(with(as.list(parms), temp)) # mg/L
-DO_stor_ini <- DO_ini # mg/L
+DOstor_ini <- DO_ini # mg/L
 yini <- c(DO = rep(DO_ini, with(as.list(parms), L / dx)),
-          DO_stor = rep(DO_stor_ini, with(as.list(parms), L / dx)))
+          DOstor = rep(DOstor_ini, with(as.list(parms), L / dx)))
 
 # Run the model -----------------------------------------------------------
-# GPP choice (choose between: "none", "constant", "sine, "ramp")
-# gpp_choice <- "constant"
-
 # uses the R deSolve function (lsoda method)
 out <- ode.1D(y = yini,
               times = times,
@@ -74,7 +71,6 @@ out <- ode.1D(y = yini,
               parms = parms,
               nspec = 2,
               dimens = with(as.list(parms), L / dx))
-              # gpp_choice = gpp_choice)
 
 # Examine the model output ------------------------------------------------
 # Reorganize the data into long-form
